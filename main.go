@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os"
@@ -69,7 +70,26 @@ type Directory struct {
 	KeyChange  string `json:"keyChange"`
 }
 
+func logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		
+		next.ServeHTTP(w, r)
+		
+		slog.Info("HTTP request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"user_agent", r.UserAgent(),
+			"duration", time.Since(start),
+		)
+	})
+}
+
 func main() {
+	// Setup JSON logging
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	
 	server := &ACMEServer{
 		accounts: make(map[string]*Account),
 		orders:   make(map[string]*Order),
@@ -86,6 +106,9 @@ func main() {
 
 	// Setup routes
 	r := mux.NewRouter()
+	
+	// Add logging middleware
+	r.Use(logRequest)
 	
 	// ACME endpoints
 	r.HandleFunc("/acme/home/directory", server.handleDirectory).Methods("GET")
