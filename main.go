@@ -29,8 +29,13 @@ const (
 	caKeyFile    = "data/ca.key"
 	serverCertFile = "data/server.crt"
 	serverKeyFile  = "data/server.key"
-	domain       = "sateh.systems"
-	serverURL    = "https://acme.sateh.systems:8443"
+)
+
+var (
+	hostname = mustGetEnv("WECCA_HOSTNAME")
+	address  = getEnv("WECCA_ADDRESS", ":8443")
+	domain   = mustGetEnv("WECCA_DOMAIN")
+	serverURL = "https://" + hostname
 )
 
 type ACMEServer struct {
@@ -70,6 +75,21 @@ type Directory struct {
 	NewOrder   string `json:"newOrder"`
 	RevokeCert string `json:"revokeCert"`
 	KeyChange  string `json:"keyChange"`
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func mustGetEnv(key string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		log.Fatalf("Environment variable %s is required but not set", key)
+	}
+	return value
 }
 
 func logRequest(next http.Handler) http.Handler {
@@ -134,11 +154,11 @@ func main() {
 		},
 	}
 
-	log.Printf("Starting ACME server on :8443 (HTTPS)")
+	log.Printf("Starting ACME server on %s (HTTPS)", address)
 	log.Printf("CA Root certificate available at %s/ca.crt", serverURL)
 	
 	httpServer := &http.Server{
-		Addr:      ":8443",
+		Addr:      address,
 		Handler:   r,
 		TLSConfig: tlsConfig,
 	}
@@ -280,13 +300,13 @@ func (s *ACMEServer) createServerCert() error {
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
 			Organization: []string{"WEC CA"},
-			CommonName:   "acme." + domain,
+			CommonName:   hostname,
 		},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().AddDate(1, 0, 0), // 1 year
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"acme." + domain},
+		DNSNames:     []string{hostname},
 	}
 
 	// Create certificate signed by CA
@@ -320,7 +340,7 @@ func (s *ACMEServer) createServerCert() error {
 	s.serverCert = serverCert
 	s.serverKey = serverKey
 
-	log.Printf("Created new server certificate for acme.%s", domain)
+	log.Printf("Created new server certificate for %s", hostname)
 	return nil
 }
 
@@ -356,7 +376,7 @@ func (s *ACMEServer) loadServerCert() error {
 	s.serverCert = serverCert
 	s.serverKey = serverKey.(*rsa.PrivateKey)
 
-	log.Printf("Loaded existing server certificate for acme.%s", domain)
+	log.Printf("Loaded existing server certificate for %s", hostname)
 	return nil
 }
 
