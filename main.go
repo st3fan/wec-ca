@@ -16,11 +16,10 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"net"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/gorilla/mux"
 )
 
 const (
@@ -35,7 +34,7 @@ var (
 	hostname = mustGetEnv("WECCA_HOSTNAME")
 	address  = getEnv("WECCA_ADDRESS", ":8443")
 	domain   = mustGetEnv("WECCA_DOMAIN")
-	serverURL = "https://" + hostname
+	serverURL = buildServerURL(hostname, address)
 )
 
 type ACMEServer struct {
@@ -92,6 +91,31 @@ func mustGetEnv(key string) string {
 	return value
 }
 
+func buildServerURL(hostname, address string) string {
+	// Extract host part from hostname (remove port if present)
+	host, _, err := net.SplitHostPort(hostname)
+	if err != nil {
+		// hostname doesn't contain a port, use as-is
+		host = hostname
+	}
+	
+	// Extract port from address
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		// If SplitHostPort fails, assume it's just a port like ":8443"
+		if strings.HasPrefix(address, ":") {
+			port = address[1:]
+		} else {
+			port = "443" // Default HTTPS port
+		}
+	}
+	
+	if port == "443" {
+		return "https://" + host
+	}
+	return "https://" + host + ":" + port
+}
+
 func logRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -127,22 +151,23 @@ func main() {
 	}
 
 	// Setup routes
-	r := mux.NewRouter()
-	
-	// Add logging middleware
-	r.Use(logRequest)
+	mux := http.NewServeMux()
 	
 	// ACME endpoints
-	r.HandleFunc("/acme/home/directory", server.handleDirectory).Methods("GET")
-	r.HandleFunc("/acme/home/new-nonce", server.handleNewNonce).Methods("HEAD", "GET")
-	r.HandleFunc("/acme/home/new-account", server.handleNewAccount).Methods("POST")
-	r.HandleFunc("/acme/home/new-order", server.handleNewOrder).Methods("POST")
-	r.HandleFunc("/acme/home/order/{orderID}", server.handleOrder).Methods("POST")
-	r.HandleFunc("/acme/home/finalize/{orderID}", server.handleFinalize).Methods("POST")
-	r.HandleFunc("/acme/home/cert/{orderID}", server.handleCertificate).Methods("POST")
+	mux.HandleFunc("GET /acme/home/directory", server.handleDirectory)
+	mux.HandleFunc("HEAD /acme/home/new-nonce", server.handleNewNonce)
+	mux.HandleFunc("GET /acme/home/new-nonce", server.handleNewNonce)
+	mux.HandleFunc("POST /acme/home/new-account", server.handleNewAccount)
+	mux.HandleFunc("POST /acme/home/new-order", server.handleNewOrder)
+	mux.HandleFunc("POST /acme/home/order/{orderID}", server.handleOrder)
+	mux.HandleFunc("POST /acme/home/finalize/{orderID}", server.handleFinalize)
+	mux.HandleFunc("POST /acme/home/cert/{orderID}", server.handleCertificate)
 	
 	// Static files
-	r.HandleFunc("/ca.crt", server.handleCACert).Methods("GET")
+	mux.HandleFunc("GET /ca.crt", server.handleCACert)
+	
+	// Wrap with logging middleware
+	handler := logRequest(mux)
 
 	// Create TLS config with server certificate and CA chain
 	tlsConfig := &tls.Config{
@@ -159,7 +184,7 @@ func main() {
 	
 	httpServer := &http.Server{
 		Addr:      address,
-		Handler:   r,
+		Handler:   handler,
 		TLSConfig: tlsConfig,
 	}
 	
@@ -495,8 +520,7 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *ACMEServer) handleOrder(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	orderID := vars["orderID"]
+	orderID := r.PathValue("orderID")
 	
 	order, exists := s.orders[orderID]
 	if !exists {
@@ -509,8 +533,7 @@ func (s *ACMEServer) handleOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *ACMEServer) handleFinalize(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	orderID := vars["orderID"]
+	orderID := r.PathValue("orderID")
 	
 	order, exists := s.orders[orderID]
 	if !exists {
@@ -675,8 +698,7 @@ func (s *ACMEServer) issueCertificate(order *Order) error {
 }
 
 func (s *ACMEServer) handleCertificate(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	orderID := vars["orderID"]
+	orderID := r.PathValue("orderID")
 
 	certFile := filepath.Join(dataDir, orderID+".crt")
 	certData, err := os.ReadFile(certFile)
