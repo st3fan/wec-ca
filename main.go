@@ -498,18 +498,46 @@ func (s *ACMEServer) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse CSR from request (simplified)
+	// Read and decode JWS request
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	r.Body.Close()
+
+	var jwsReq struct {
+		Protected string `json:"protected"`
+		Payload   string `json:"payload"`
+		Signature string `json:"signature"`
+	}
+	
+	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
+		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
+		return
+	}
+
+	// Decode the base64url payload
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(jwsReq.Payload)
+	if err != nil {
+		http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
+		return
+	}
+
+	// Parse CSR from payload
 	var req struct {
 		CSR string `json:"csr"`
 	}
 	
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	// Issue certificate
-	if err := s.issueCertificate(order); err != nil {
+	slog.Info("Finalize request", "csr", req.CSR)
+
+	// Issue certificate using the CSR
+	if err := s.issueCertificateFromCSR(order, req.CSR); err != nil {
 		http.Error(w, "Failed to issue certificate", http.StatusInternalServerError)
 		return
 	}
@@ -519,6 +547,54 @@ func (s *ACMEServer) handleFinalize(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(order)
+}
+
+func (s *ACMEServer) issueCertificateFromCSR(order *Order, csrB64 string) error {
+	// Decode the base64url encoded CSR
+	csrDER, err := base64.RawURLEncoding.DecodeString(csrB64)
+	if err != nil {
+		return fmt.Errorf("failed to decode CSR: %v", err)
+	}
+
+	// Parse the CSR
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	if err != nil {
+		return fmt.Errorf("failed to parse CSR: %v", err)
+	}
+
+	// Verify the CSR signature
+	if err := csr.CheckSignature(); err != nil {
+		return fmt.Errorf("CSR signature verification failed: %v", err)
+	}
+
+	slog.Info("Parsed CSR", "subject", csr.Subject, "dns_names", csr.DNSNames)
+
+	// Create certificate template from CSR
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      csr.Subject,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().AddDate(0, 3, 0), // 3 months
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     csr.DNSNames,
+	}
+
+	// Create certificate using the public key from the CSR
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, s.caCert, csr.PublicKey, s.caKey)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %v", err)
+	}
+
+	// Save certificate
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certFile := filepath.Join(dataDir, order.ID+".crt")
+	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+		return fmt.Errorf("failed to save certificate: %v", err)
+	}
+
+	log.Printf("Issued certificate for %v", csr.DNSNames)
+	return nil
 }
 
 func (s *ACMEServer) issueCertificate(order *Order) error {
@@ -589,17 +665,9 @@ func (s *ACMEServer) handleCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyFile := filepath.Join(dataDir, orderID+".key")
-	keyData, err := os.ReadFile(keyFile)
-	if err != nil {
-		http.Error(w, "Private key not found", http.StatusNotFound)
-		return
-	}
-
-	// Return both certificate and private key
+	// Return only the certificate (not the private key)
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
 	w.Write(certData)
-	w.Write(keyData)
 }
 
 func (s *ACMEServer) handleCACert(w http.ResponseWriter, r *http.Request) {
