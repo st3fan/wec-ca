@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"math/big"
@@ -398,12 +399,23 @@ func (s *ACMEServer) handleNewAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body first for logging
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	r.Body.Close()
+	
+	slog.Info("New order raw request", "body", string(bodyBytes), "content_type", r.Header.Get("Content-Type"))
+	
 	// Parse request (simplified)
 	var req struct {
 		Identifiers []Identifier `json:"identifiers"`
 	}
 	
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		slog.Error("Failed to parse request JSON", "error", err, "body", string(bodyBytes))
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
