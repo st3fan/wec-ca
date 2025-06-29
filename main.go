@@ -408,6 +408,8 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("New order request", "request", req)
+
 	// Validate that all identifiers are subdomains of our domain
 	for _, id := range req.Identifiers {
 		if id.Type != "dns" || (!strings.HasSuffix(id.Value, "."+domain) && id.Value != domain) {
@@ -427,6 +429,8 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	s.orders[orderID] = order
+
+	slog.Info("Generated order", "order", order)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Location", serverURL+"/acme/home/order/"+orderID)
