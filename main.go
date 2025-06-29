@@ -28,7 +28,7 @@ const (
 	serverCertFile = "data/server.crt"
 	serverKeyFile  = "data/server.key"
 	domain       = "sateh.systems"
-	serverURL    = "https://acme.sateh.systems"
+	serverURL    = "https://acme.sateh.systems:8443"
 )
 
 type ACMEServer struct {
