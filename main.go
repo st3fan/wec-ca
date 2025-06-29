@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -409,14 +410,37 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	
 	slog.Info("New order raw request", "body", string(bodyBytes), "content_type", r.Header.Get("Content-Type"))
 	
-	// Parse request (simplified)
+	// Parse JWS request
+	var jwsReq struct {
+		Protected string `json:"protected"`
+		Payload   string `json:"payload"`
+		Signature string `json:"signature"`
+	}
+	
+	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
+		slog.Error("Failed to parse JWS request", "error", err, "body", string(bodyBytes))
+		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
+		return
+	}
+
+	// Decode the base64url payload
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(jwsReq.Payload)
+	if err != nil {
+		slog.Error("Failed to decode payload", "error", err, "payload", jwsReq.Payload)
+		http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
+		return
+	}
+	
+	slog.Info("Decoded payload", "payload", string(payloadBytes))
+	
+	// Parse the actual request from the payload
 	var req struct {
 		Identifiers []Identifier `json:"identifiers"`
 	}
 	
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		slog.Error("Failed to parse request JSON", "error", err, "body", string(bodyBytes))
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
+		slog.Error("Failed to parse payload JSON", "error", err, "payload", string(payloadBytes))
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
