@@ -563,6 +563,17 @@ func (s *ACMEServer) issueCertificate(order *Order) error {
 		return fmt.Errorf("failed to save certificate: %v", err)
 	}
 
+	// Save private key
+	keyDER, err := x509.MarshalPKCS8PrivateKey(certKey)
+	if err != nil {
+		return fmt.Errorf("failed to marshal certificate private key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	keyFile := filepath.Join(dataDir, order.ID+".key")
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		return fmt.Errorf("failed to save certificate private key: %v", err)
+	}
+
 	log.Printf("Issued certificate for %v", dnsNames)
 	return nil
 }
@@ -578,8 +589,17 @@ func (s *ACMEServer) handleCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	keyFile := filepath.Join(dataDir, orderID+".key")
+	keyData, err := os.ReadFile(keyFile)
+	if err != nil {
+		http.Error(w, "Private key not found", http.StatusNotFound)
+		return
+	}
+
+	// Return both certificate and private key
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
 	w.Write(certData)
+	w.Write(keyData)
 }
 
 func (s *ACMEServer) handleCACert(w http.ResponseWriter, r *http.Request) {
