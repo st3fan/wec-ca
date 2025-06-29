@@ -99,11 +99,11 @@ func main() {
 	// Static files
 	r.HandleFunc("/ca.crt", server.handleCACert).Methods("GET")
 
-	// Create TLS config with server certificate
+	// Create TLS config with server certificate and CA chain
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{
 			{
-				Certificate: [][]byte{server.serverCert.Raw},
+				Certificate: [][]byte{server.serverCert.Raw, server.caCert.Raw},
 				PrivateKey:  server.serverKey,
 			},
 		},
