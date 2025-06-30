@@ -1,0 +1,31 @@
+# Git files
+.git
+.gitignore
+
+# Documentation
+README.md
+LICENSE
+CLAUDE.md
+
+# Data directory (runtime data, not needed in build)
+data/
+
+# Test files
+*_test.go
+
+# Binary outputs (we build fresh in container)
+wec-ca
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

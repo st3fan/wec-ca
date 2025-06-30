@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  wec-ca:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8443:8443"
+    environment:
+      - WECCA_ADDRESS=:8443
+      - WECCA_HOSTNAME=localhost
+      - WECCA_DOMAIN=localhost
+      - WECCA_SERVER_URL=https://localhost:8443
+      - WECCA_CERT_LIFETIME=24h
+    volumes:
+      - wec-ca-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider https://localhost:8443/acme/directory || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  wec-ca-data:
+    driver: local
