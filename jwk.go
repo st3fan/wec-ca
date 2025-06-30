@@ -27,8 +27,7 @@ type JWK struct {
 	X     string `json:"x,omitempty"`   // X coordinate
 	Y     string `json:"y,omitempty"`   // Y coordinate
 
-	// OKP key parameters (kty: OKP) for EdDSA
-	XCoord string `json:"x,omitempty"` // X coordinate for OKP
+	// Note: OKP keys also use the "x" field, which maps to the same X field above
 }
 
 // JWKValidationError represents an error in JWK validation
@@ -139,7 +138,7 @@ func validateOKPKey(jwk *JWK) error {
 	if jwk.Curve == "" {
 		return &JWKValidationError{Message: "missing required field for OKP key", Field: "crv"}
 	}
-	if jwk.XCoord == "" {
+	if jwk.X == "" {
 		return &JWKValidationError{Message: "missing required field for OKP key", Field: "x"}
 	}
 
@@ -152,7 +151,7 @@ func validateOKPKey(jwk *JWK) error {
 	}
 
 	// Validate X coordinate
-	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.XCoord)
+	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
 	if err != nil {
 		return &JWKValidationError{Message: "invalid base64url encoding", Field: "x"}
 	}
@@ -275,7 +274,7 @@ func jwkToEd25519PublicKey(jwk *JWK) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("unsupported curve: %s", jwk.Curve)
 	}
 
-	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.XCoord)
+	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
 	if err != nil {
 		return nil, fmt.Errorf("invalid x coordinate encoding: %v", err)
 	}

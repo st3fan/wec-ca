@@ -139,10 +139,12 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 
 	jwk, err := ExtractJWKFromProtectedHeader(protectedB64)
 	if err != nil {
-		slog.Error("JWK extraction failed", "error", err)
+		slog.Error("JWK extraction failed", "error", err, "protected_header", protectedB64)
 		http.Error(w, fmt.Sprintf("Invalid JWK: %v", err), http.StatusBadRequest)
 		return
 	}
+
+	slog.Info("Successfully extracted JWK", "key_type", jwk.KeyType, "curve", jwk.Curve)
 
 	// Serialize JWK for storage
 	jwkJSON, err := SerializeJWK(jwk)

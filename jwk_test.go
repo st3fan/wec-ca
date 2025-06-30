@@ -76,7 +76,7 @@ func TestValidateJWK(t *testing.T) {
 		jwk := &JWK{
 			KeyType: "OKP",
 			Curve:   "Ed25519",
-			XCoord:  base64.RawURLEncoding.EncodeToString(pubKey),
+			X:       base64.RawURLEncoding.EncodeToString(pubKey),
 		}
 
 		if err := ValidateJWK(jwk); err != nil {
@@ -157,7 +157,7 @@ func TestValidateJWK(t *testing.T) {
 		jwk := &JWK{
 			KeyType: "OKP",
 			Curve:   "Ed25519",
-			XCoord:  base64.RawURLEncoding.EncodeToString(shortKey),
+			X:       base64.RawURLEncoding.EncodeToString(shortKey),
 		}
 		err := ValidateJWK(jwk)
 		if err == nil {
@@ -349,7 +349,7 @@ func TestJWKToPublicKey(t *testing.T) {
 		jwk := &JWK{
 			KeyType: "OKP",
 			Curve:   "Ed25519",
-			XCoord:  base64.RawURLEncoding.EncodeToString(pubKey),
+			X:       base64.RawURLEncoding.EncodeToString(pubKey),
 		}
 
 		extractedPubKey, err := JWKToPublicKey(jwk)
