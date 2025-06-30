@@ -30,13 +30,7 @@ const (
 	serverKeyFile  = "data/server.key"
 )
 
-var (
-	hostname = mustGetEnv("WECCA_HOSTNAME")
-	address  = getEnv("WECCA_ADDRESS", ":8443")
-	domain   = mustGetEnv("WECCA_DOMAIN")
-	certLifetime = parseCertLifetime(getEnv("WECCA_CERT_LIFETIME", "28d"))
-	serverURL = buildServerURL(hostname, address)
-)
+var settings *Settings
 
 type ACMEServer struct {
 	caCert     *x509.Certificate
@@ -77,21 +71,6 @@ type Directory struct {
 	KeyChange  string `json:"keyChange"`
 }
 
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func mustGetEnv(key string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		log.Fatalf("Environment variable %s is required but not set", key)
-	}
-	return value
-}
-
 func buildServerURL(hostname, address string) string {
 	// Extract host part from hostname (remove port if present)
 	host, _, err := net.SplitHostPort(hostname)
@@ -117,28 +96,6 @@ func buildServerURL(hostname, address string) string {
 	return "https://" + host + ":" + port
 }
 
-func parseCertLifetime(lifetime string) time.Duration {
-	if strings.HasSuffix(lifetime, "h") {
-		hours, err := time.ParseDuration(lifetime)
-		if err != nil {
-			log.Fatalf("Invalid WECCA_CERT_LIFETIME format '%s': %v", lifetime, err)
-		}
-		return hours
-	}
-	
-	if strings.HasSuffix(lifetime, "d") {
-		daysStr := strings.TrimSuffix(lifetime, "d")
-		days, err := time.ParseDuration(daysStr + "h")
-		if err != nil {
-			log.Fatalf("Invalid WECCA_CERT_LIFETIME format '%s': %v", lifetime, err)
-		}
-		return days * 24
-	}
-	
-	log.Fatalf("Invalid WECCA_CERT_LIFETIME format '%s': must end with 'h' for hours or 'd' for days", lifetime)
-	return 0
-}
-
 func logRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -158,6 +115,13 @@ func logRequest(next http.Handler) http.Handler {
 func main() {
 	// Setup JSON logging
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	
+	// Load settings from environment
+	var err error
+	settings, err = newSettingsFromEnv()
+	if err != nil {
+		log.Fatalf("Failed to load settings: %v", err)
+	}
 	
 	server := &ACMEServer{
 		accounts: make(map[string]*Account),
@@ -202,11 +166,11 @@ func main() {
 		},
 	}
 
-	log.Printf("Starting ACME server on %s (HTTPS)", address)
-	log.Printf("CA Root certificate available at %s/ca.crt", serverURL)
+	log.Printf("Starting ACME server on %s (HTTPS)", settings.Address)
+	log.Printf("CA Root certificate available at %s/ca.crt", settings.ServerURL)
 	
 	httpServer := &http.Server{
-		Addr:      address,
+		Addr:      settings.Address,
 		Handler:   handler,
 		TLSConfig: tlsConfig,
 	}
@@ -245,7 +209,7 @@ func (s *ACMEServer) createCA() error {
 			Locality:      []string{""},
 			StreetAddress: []string{""},
 			PostalCode:    []string{""},
-			CommonName:    domain,
+			CommonName:    settings.Domain,
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(10, 0, 0), // 10 years
@@ -253,7 +217,7 @@ func (s *ACMEServer) createCA() error {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
-		DNSNames:              []string{domain, "*." + domain},
+		DNSNames:              []string{settings.Domain, "*." + settings.Domain},
 	}
 
 	// Create certificate
@@ -287,7 +251,7 @@ func (s *ACMEServer) createCA() error {
 	s.caCert = caCert
 	s.caKey = caKey
 
-	log.Printf("Created new CA certificate for %s (valid for 10 years)", domain)
+	log.Printf("Created new CA certificate for %s (valid for 10 years)", settings.Domain)
 	return nil
 }
 
@@ -323,7 +287,7 @@ func (s *ACMEServer) loadCA() error {
 	s.caCert = caCert
 	s.caKey = caKey.(*rsa.PrivateKey)
 
-	log.Printf("Loaded existing CA certificate for %s", domain)
+	log.Printf("Loaded existing CA certificate for %s", settings.Domain)
 	return nil
 }
 
@@ -348,13 +312,13 @@ func (s *ACMEServer) createServerCert() error {
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
 			Organization: []string{"WEC CA"},
-			CommonName:   hostname,
+			CommonName:   settings.Hostname,
 		},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().AddDate(1, 0, 0), // 1 year
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{hostname},
+		DNSNames:     []string{settings.Hostname},
 	}
 
 	// Create certificate signed by CA
@@ -388,7 +352,7 @@ func (s *ACMEServer) createServerCert() error {
 	s.serverCert = serverCert
 	s.serverKey = serverKey
 
-	log.Printf("Created new server certificate for %s", hostname)
+	log.Printf("Created new server certificate for %s", settings.Hostname)
 	return nil
 }
 
@@ -424,17 +388,17 @@ func (s *ACMEServer) loadServerCert() error {
 	s.serverCert = serverCert
 	s.serverKey = serverKey.(*rsa.PrivateKey)
 
-	log.Printf("Loaded existing server certificate for %s", hostname)
+	log.Printf("Loaded existing server certificate for %s", settings.Hostname)
 	return nil
 }
 
 func (s *ACMEServer) handleDirectory(w http.ResponseWriter, r *http.Request) {
 	dir := Directory{
-		NewNonce:   serverURL + "/acme/home/new-nonce",
-		NewAccount: serverURL + "/acme/home/new-account",
-		NewOrder:   serverURL + "/acme/home/new-order",
-		RevokeCert: serverURL + "/acme/home/revoke-cert",
-		KeyChange:  serverURL + "/acme/home/key-change",
+		NewNonce:   settings.ServerURL + "/acme/home/new-nonce",
+		NewAccount: settings.ServerURL + "/acme/home/new-account",
+		NewOrder:   settings.ServerURL + "/acme/home/new-order",
+		RevokeCert: settings.ServerURL + "/acme/home/revoke-cert",
+		KeyChange:  settings.ServerURL + "/acme/home/key-change",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -462,7 +426,7 @@ func (s *ACMEServer) handleNewAccount(w http.ResponseWriter, r *http.Request) {
 	s.accounts[accountID] = account
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", serverURL+"/acme/home/account/"+accountID)
+	w.Header().Set("Location", settings.ServerURL+"/acme/home/account/"+accountID)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(account)
 }
@@ -516,8 +480,8 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 
 	// Validate that all identifiers are subdomains of our domain
 	for _, id := range req.Identifiers {
-		if id.Type != "dns" || (!strings.HasSuffix(id.Value, "."+domain) && id.Value != domain) {
-			http.Error(w, "Invalid identifier: only "+domain+" subdomains allowed", http.StatusBadRequest)
+		if id.Type != "dns" || (!strings.HasSuffix(id.Value, "."+settings.Domain) && id.Value != settings.Domain) {
+			http.Error(w, "Invalid identifier: only "+settings.Domain+" subdomains allowed", http.StatusBadRequest)
 			return
 		}
 	}
@@ -528,7 +492,7 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 		ID:          orderID,
 		Status:      "ready", // Skip authorization for simplicity
 		Identifiers: req.Identifiers,
-		Finalize:    serverURL + "/acme/home/finalize/" + orderID,
+		Finalize:    settings.ServerURL + "/acme/home/finalize/" + orderID,
 		Expires:     time.Now().Add(24 * time.Hour),
 	}
 	
@@ -537,7 +501,7 @@ func (s *ACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Generated order", "order", order)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", serverURL+"/acme/home/order/"+orderID)
+	w.Header().Set("Location", settings.ServerURL+"/acme/home/order/"+orderID)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(order)
 }
@@ -609,7 +573,7 @@ func (s *ACMEServer) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	order.Status = "valid"
-	order.Certificate = serverURL + "/acme/home/cert/" + orderID
+	order.Certificate = settings.ServerURL + "/acme/home/cert/" + orderID
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(order)
@@ -640,7 +604,7 @@ func (s *ACMEServer) issueCertificateFromCSR(order *Order, csrB64 string) error 
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      csr.Subject,
 		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(certLifetime),
+		NotAfter:     time.Now().Add(settings.CertLifetime),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     csr.DNSNames,
@@ -686,7 +650,7 @@ func (s *ACMEServer) issueCertificate(order *Order) error {
 			CommonName:   dnsNames[0],
 		},
 		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(certLifetime),
+		NotAfter:     time.Now().Add(settings.CertLifetime),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     dnsNames,
