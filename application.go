@@ -90,14 +90,15 @@ func (app *Application) run() error {
 	mux := http.NewServeMux()
 
 	// ACME endpoints
-	mux.HandleFunc("GET /acme/home/directory", app.handleDirectory)
-	mux.HandleFunc("HEAD /acme/home/new-nonce", app.handleNewNonce)
-	mux.HandleFunc("GET /acme/home/new-nonce", app.handleNewNonce)
-	mux.HandleFunc("POST /acme/home/new-account", app.handleNewAccount)
-	mux.HandleFunc("POST /acme/home/new-order", app.handleNewOrder)
-	mux.HandleFunc("POST /acme/home/order/{orderID}", app.handleOrder)
-	mux.HandleFunc("POST /acme/home/finalize/{orderID}", app.handleFinalize)
-	mux.HandleFunc("POST /acme/home/cert/{orderID}", app.handleCertificate)
+	mux.HandleFunc("GET /acme/directory", app.handleDirectory)
+	mux.HandleFunc("HEAD /acme/new-nonce", app.handleNewNonce)
+	mux.HandleFunc("GET /acme/new-nonce", app.handleNewNonce)
+	mux.HandleFunc("POST /acme/new-account", app.handleNewAccount)
+	mux.HandleFunc("GET /acme/account/{accountID}", app.handleAccount)
+	mux.HandleFunc("POST /acme/new-order", app.handleNewOrder)
+	mux.HandleFunc("GET /acme/order/{orderID}", app.handleOrder)
+	mux.HandleFunc("POST /acme/finalize/{orderID}", app.handleFinalize)
+	mux.HandleFunc("GET /acme/cert/{orderID}", app.handleCertificate)
 
 	// Static files
 	mux.HandleFunc("GET /ca.crt", app.handleCACert)

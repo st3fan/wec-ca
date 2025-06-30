@@ -22,11 +22,11 @@ import (
 
 func (app *Application) handleDirectory(w http.ResponseWriter, r *http.Request) {
 	dir := Directory{
-		NewNonce:   app.settings.ServerURL + "/acme/home/new-nonce",
-		NewAccount: app.settings.ServerURL + "/acme/home/new-account",
-		NewOrder:   app.settings.ServerURL + "/acme/home/new-order",
-		RevokeCert: app.settings.ServerURL + "/acme/home/revoke-cert",
-		KeyChange:  app.settings.ServerURL + "/acme/home/key-change",
+		NewNonce:   app.settings.ServerURL + "/acme/new-nonce",
+		NewAccount: app.settings.ServerURL + "/acme/new-account",
+		NewOrder:   app.settings.ServerURL + "/acme/new-order",
+		RevokeCert: app.settings.ServerURL + "/acme/revoke-cert",
+		KeyChange:  app.settings.ServerURL + "/acme/key-change",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -139,7 +139,7 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Validate protected header and extract JWK
-	expectedURL := app.settings.ServerURL + "/acme/home/new-account"
+	expectedURL := app.settings.ServerURL + "/acme/new-account"
 	header, err := ValidateProtectedHeader(jwsRequest.Protected, expectedURL)
 	if err != nil {
 		slog.Error("Protected header validation failed", "error", err)
@@ -224,8 +224,21 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", app.settings.ServerURL+"/acme/home/account/"+accountID)
+	w.Header().Set("Location", app.settings.ServerURL+"/acme/account/"+accountID)
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(account)
+}
+
+func (app *Application) handleAccount(w http.ResponseWriter, r *http.Request) {
+	accountID := r.PathValue("accountID")
+
+	account, exists := app.accounts[accountID]
+	if !exists {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(account)
 }
 
@@ -301,7 +314,7 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 		ID:          orderID,
 		Status:      "ready", // Skip authorization for simplicity
 		Identifiers: req.Identifiers,
-		Finalize:    app.settings.ServerURL + "/acme/home/finalize/" + orderID,
+		Finalize:    app.settings.ServerURL + "/acme/finalize/" + orderID,
 		Expires:     time.Now().Add(24 * time.Hour),
 	}
 
@@ -322,7 +335,7 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", app.settings.ServerURL+"/acme/home/order/"+orderID)
+	w.Header().Set("Location", app.settings.ServerURL+"/acme/order/"+orderID)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(order)
 }
@@ -406,7 +419,7 @@ func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	order.Status = "valid"
-	order.Certificate = app.settings.ServerURL + "/acme/home/cert/" + orderID
+	order.Certificate = app.settings.ServerURL + "/acme/cert/" + orderID
 
 	// Generate a fresh nonce for the response
 	freshNonce, err := app.nonceGen.Generate()
