@@ -130,21 +130,41 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Extract and validate JWK from protected header
-	protectedB64, ok := jwsReq["protected"].(string)
-	if !ok {
-		http.Error(w, "Missing or invalid protected header", http.StatusBadRequest)
-		return
-	}
-
-	jwk, err := ExtractJWKFromProtectedHeader(protectedB64)
+	// Validate JWS structure
+	jwsRequest, err := ValidateJWSStructure(jwsReq)
 	if err != nil {
-		slog.Error("JWK extraction failed", "error", err, "protected_header", protectedB64)
-		http.Error(w, fmt.Sprintf("Invalid JWK: %v", err), http.StatusBadRequest)
+		slog.Error("Invalid JWS structure", "error", err)
+		http.Error(w, fmt.Sprintf("Invalid JWS: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	// Validate protected header and extract JWK
+	expectedURL := app.settings.ServerURL + "/acme/home/new-account"
+	header, err := ValidateProtectedHeader(jwsRequest.Protected, expectedURL)
+	if err != nil {
+		slog.Error("Protected header validation failed", "error", err)
+		http.Error(w, fmt.Sprintf("Invalid protected header: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	jwk := header.JWK
 	slog.Info("Successfully extracted JWK", "key_type", jwk.KeyType, "curve", jwk.Curve)
+
+	// Validate algorithm matches key type
+	if err := ValidateAlgorithmKeyMatch(header.Algorithm, jwk); err != nil {
+		slog.Error("Algorithm/key mismatch", "error", err, "algorithm", header.Algorithm, "key_type", jwk.KeyType)
+		http.Error(w, fmt.Sprintf("Algorithm/key mismatch: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Verify JWS signature
+	if err := VerifyJWSSignature(jwsRequest, jwk); err != nil {
+		slog.Error("JWS signature verification failed", "error", err, "algorithm", header.Algorithm)
+		http.Error(w, "Invalid signature", http.StatusBadRequest)
+		return
+	}
+
+	slog.Info("JWS signature verification successful", "algorithm", header.Algorithm)
 
 	// Serialize JWK for storage
 	jwkJSON, err := SerializeJWK(jwk)
