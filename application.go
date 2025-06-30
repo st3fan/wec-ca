@@ -32,7 +32,7 @@ type Application struct {
 	serverCert     *x509.Certificate
 	serverKey      *rsa.PrivateKey
 	accountStorage AccountStorage
-	orders         map[string]*Order
+	orderStorage   OrderStorage
 	nonceGen       NonceGenerator
 	nonceStorage   NonceStorage
 }
@@ -71,7 +71,7 @@ func newApplication(settings *Settings) *Application {
 	return &Application{
 		settings:       settings,
 		accountStorage: NewFilesystemAccountStorage(filepath.Join(dataDir, "accounts")),
-		orders:         make(map[string]*Order),
+		orderStorage:   NewFilesystemOrderStorage(filepath.Join(dataDir, "orders")),
 		nonceGen:       NewCryptoNonceGenerator(16), // 16 bytes = 128 bits of entropy
 		nonceStorage:   NewInMemoryNonceStorage(time.Hour, 10*time.Minute), // 1 hour TTL, cleanup every 10 minutes
 	}
