@@ -34,6 +34,7 @@ var (
 	hostname = mustGetEnv("WECCA_HOSTNAME")
 	address  = getEnv("WECCA_ADDRESS", ":8443")
 	domain   = mustGetEnv("WECCA_DOMAIN")
+	certLifetime = parseCertLifetime(getEnv("WECCA_CERT_LIFETIME", "28d"))
 	serverURL = buildServerURL(hostname, address)
 )
 
@@ -114,6 +115,28 @@ func buildServerURL(hostname, address string) string {
 		return "https://" + host
 	}
 	return "https://" + host + ":" + port
+}
+
+func parseCertLifetime(lifetime string) time.Duration {
+	if strings.HasSuffix(lifetime, "h") {
+		hours, err := time.ParseDuration(lifetime)
+		if err != nil {
+			log.Fatalf("Invalid WECCA_CERT_LIFETIME format '%s': %v", lifetime, err)
+		}
+		return hours
+	}
+	
+	if strings.HasSuffix(lifetime, "d") {
+		daysStr := strings.TrimSuffix(lifetime, "d")
+		days, err := time.ParseDuration(daysStr + "h")
+		if err != nil {
+			log.Fatalf("Invalid WECCA_CERT_LIFETIME format '%s': %v", lifetime, err)
+		}
+		return days * 24
+	}
+	
+	log.Fatalf("Invalid WECCA_CERT_LIFETIME format '%s': must end with 'h' for hours or 'd' for days", lifetime)
+	return 0
 }
 
 func logRequest(next http.Handler) http.Handler {
@@ -617,7 +640,7 @@ func (s *ACMEServer) issueCertificateFromCSR(order *Order, csrB64 string) error 
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      csr.Subject,
 		NotBefore:    time.Now(),
-		NotAfter:     time.Now().AddDate(0, 3, 0), // 3 months
+		NotAfter:     time.Now().Add(certLifetime),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     csr.DNSNames,
@@ -663,7 +686,7 @@ func (s *ACMEServer) issueCertificate(order *Order) error {
 			CommonName:   dnsNames[0],
 		},
 		NotBefore:    time.Now(),
-		NotAfter:     time.Now().AddDate(0, 3, 0), // 3 months
+		NotAfter:     time.Now().Add(certLifetime),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     dnsNames,
