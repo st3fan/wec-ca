@@ -130,13 +130,63 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// For this minimal implementation, we'll accept any account creation
+	// Extract and validate JWK from protected header
+	protectedB64, ok := jwsReq["protected"].(string)
+	if !ok {
+		http.Error(w, "Missing or invalid protected header", http.StatusBadRequest)
+		return
+	}
+
+	jwk, err := ExtractJWKFromProtectedHeader(protectedB64)
+	if err != nil {
+		slog.Error("JWK extraction failed", "error", err, "protected_header", protectedB64)
+		http.Error(w, fmt.Sprintf("Invalid JWK: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	slog.Info("Successfully extracted JWK", "key_type", jwk.KeyType, "curve", jwk.Curve)
+
+	// Serialize JWK for storage
+	jwkJSON, err := SerializeJWK(jwk)
+	if err != nil {
+		slog.Error("JWK serialization failed", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse payload to extract contact information
+	payloadB64, ok := jwsReq["payload"].(string)
+	if !ok {
+		http.Error(w, "Missing or invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	var contact []string
+	if payloadB64 != "" { // Empty payload is allowed for new account
+		payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
+		if err != nil {
+			http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
+			return
+		}
+
+		var payload struct {
+			Contact []string `json:"contact,omitempty"`
+		}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			// Ignore payload parsing errors for account creation - contact is optional
+			slog.Info("Could not parse account payload", "error", err)
+		} else {
+			contact = payload.Contact
+		}
+	}
+
 	accountID := fmt.Sprintf("account_%d", time.Now().UnixNano())
 
 	account := &Account{
-		ID:     accountID,
-		Status: "valid",
-		Key:    "dummy_key", // In production, extract from JWS
+		ID:      accountID,
+		Status:  "valid",
+		Contact: contact,
+		Key:     jwkJSON, // Store validated JWK as JSON
 	}
 
 	app.accounts[accountID] = account
