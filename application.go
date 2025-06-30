@@ -98,6 +98,7 @@ func (app *Application) run() error {
 	mux.HandleFunc("POST /acme/new-order", app.handleNewOrder)
 	mux.HandleFunc("GET /acme/order/{orderID}", app.handleOrder)
 	mux.HandleFunc("POST /acme/finalize/{orderID}", app.handleFinalize)
+	mux.HandleFunc("POST /acme/cert/{orderID}", app.handleCertificate)
 	mux.HandleFunc("GET /acme/cert/{orderID}", app.handleCertificate)
 
 	// Static files
