@@ -17,7 +17,6 @@ data/
 wec-ca
 
 # Docker files
-Dockerfile
 .dockerignore
 
 # IDE files
