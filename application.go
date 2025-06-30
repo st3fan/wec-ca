@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -25,15 +26,15 @@ const (
 )
 
 type Application struct {
-	settings      *Settings
-	caCert        *x509.Certificate
-	caKey         *rsa.PrivateKey
-	serverCert    *x509.Certificate
-	serverKey     *rsa.PrivateKey
-	accounts      map[string]*Account
-	orders        map[string]*Order
-	nonceGen      NonceGenerator
-	nonceStorage  NonceStorage
+	settings       *Settings
+	caCert         *x509.Certificate
+	caKey          *rsa.PrivateKey
+	serverCert     *x509.Certificate
+	serverKey      *rsa.PrivateKey
+	accountStorage AccountStorage
+	orders         map[string]*Order
+	nonceGen       NonceGenerator
+	nonceStorage   NonceStorage
 }
 
 type Account struct {
@@ -68,11 +69,11 @@ type Directory struct {
 
 func newApplication(settings *Settings) *Application {
 	return &Application{
-		settings:     settings,
-		accounts:     make(map[string]*Account),
-		orders:       make(map[string]*Order),
-		nonceGen:     NewCryptoNonceGenerator(16), // 16 bytes = 128 bits of entropy
-		nonceStorage: NewInMemoryNonceStorage(time.Hour, 10*time.Minute), // 1 hour TTL, cleanup every 10 minutes
+		settings:       settings,
+		accountStorage: NewFilesystemAccountStorage(filepath.Join(dataDir, "accounts")),
+		orders:         make(map[string]*Order),
+		nonceGen:       NewCryptoNonceGenerator(16), // 16 bytes = 128 bits of entropy
+		nonceStorage:   NewInMemoryNonceStorage(time.Hour, 10*time.Minute), // 1 hour TTL, cleanup every 10 minutes
 	}
 }
 
