@@ -329,7 +329,7 @@ func (app *Application) createServerCert() error {
 	app.serverCert = serverCert
 	app.serverKey = serverKey
 
-	log.Printf("Created new server certificate for %s", app.settings.Hostname)
+	log.Printf("Created new server certificate for %s", host)
 	return nil
 }
 
