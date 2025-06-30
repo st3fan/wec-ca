@@ -313,7 +313,7 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orderID := fmt.Sprintf("order_%d", time.Now().UnixNano())
+	orderID := strconv.FormatInt(time.Now().UnixNano(), 10)
 
 	order := &Order{
 		ID:          orderID,
@@ -323,7 +323,11 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 		Expires:     time.Now().Add(24 * time.Hour),
 	}
 
-	app.orders[orderID] = order
+	if err := app.orderStorage.Create(order); err != nil {
+		slog.Error("Failed to store order", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	slog.Info("Generated order", "order", order)
 
@@ -348,8 +352,8 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 func (app *Application) handleOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
-	order, exists := app.orders[orderID]
-	if !exists {
+	order, err := app.orderStorage.Read(orderID)
+	if err != nil {
 		http.Error(w, "Order not found", http.StatusNotFound)
 		return
 	}
@@ -361,8 +365,8 @@ func (app *Application) handleOrder(w http.ResponseWriter, r *http.Request) {
 func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
-	order, exists := app.orders[orderID]
-	if !exists {
+	order, err := app.orderStorage.Read(orderID)
+	if err != nil {
 		http.Error(w, "Order not found", http.StatusNotFound)
 		return
 	}
@@ -425,6 +429,12 @@ func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
 
 	order.Status = "valid"
 	order.Certificate = app.settings.ServerURL + "/acme/cert/" + orderID
+
+	if err := app.orderStorage.Update(order); err != nil {
+		slog.Error("Failed to update order", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	// Generate a fresh nonce for the response
 	freshNonce, err := app.nonceGen.Generate()
