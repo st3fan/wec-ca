@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -67,4 +68,29 @@ func parseCertLifetime(lifetime string) (time.Duration, error) {
 	}
 	
 	return 0, fmt.Errorf("invalid format '%s': must end with 'h' for hours or 'd' for days", lifetime)
+}
+
+func buildServerURL(hostname, address string) string {
+	// Extract host part from hostname (remove port if present)
+	host, _, err := net.SplitHostPort(hostname)
+	if err != nil {
+		// hostname doesn't contain a port, use as-is
+		host = hostname
+	}
+	
+	// Extract port from address
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		// If SplitHostPort fails, assume it's just a port like ":8443"
+		if strings.HasPrefix(address, ":") {
+			port = address[1:]
+		} else {
+			port = "443" // Default HTTPS port
+		}
+	}
+	
+	if port == "443" {
+		return "https://" + host
+	}
+	return "https://" + host + ":" + port
 }
