@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -200,7 +201,7 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	accountID := fmt.Sprintf("account_%d", time.Now().UnixNano())
+	accountID := strconv.FormatInt(time.Now().UnixNano(), 10)
 
 	account := &Account{
 		ID:      accountID,
@@ -209,7 +210,11 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 		Key:     jwkJSON, // Store validated JWK as JSON
 	}
 
-	app.accounts[accountID] = account
+	if err := app.accountStorage.Create(account); err != nil {
+		slog.Error("Failed to store account", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	// Generate a fresh nonce for the response
 	freshNonce, err := app.nonceGen.Generate()
@@ -232,8 +237,8 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 func (app *Application) handleAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := r.PathValue("accountID")
 
-	account, exists := app.accounts[accountID]
-	if !exists {
+	account, err := app.accountStorage.Read(accountID)
+	if err != nil {
 		http.Error(w, "Account not found", http.StatusNotFound)
 		return
 	}
