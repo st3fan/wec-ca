@@ -34,14 +34,102 @@ func (app *Application) handleDirectory(w http.ResponseWriter, r *http.Request) 
 }
 
 func (app *Application) handleNewNonce(w http.ResponseWriter, r *http.Request) {
-	// Generate a simple nonce (in production, this should be more sophisticated)
-	nonce := fmt.Sprintf("%d", time.Now().UnixNano())
+	// Generate cryptographically secure nonce
+	nonce, err := app.nonceGen.Generate()
+	if err != nil {
+		slog.Error("Failed to generate nonce", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Store nonce for validation
+	if err := app.nonceStorage.Store(nonce); err != nil {
+		slog.Error("Failed to store nonce", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Replay-Nonce", nonce)
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
+	
+	// RFC 8555: HEAD requests should return 200, GET requests should return 204
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// validateNonce extracts and validates the nonce from a JWS request
+func (app *Application) validateNonce(w http.ResponseWriter, jwsReq map[string]interface{}) bool {
+	protectedB64, ok := jwsReq["protected"].(string)
+	if !ok {
+		http.Error(w, "Missing or invalid protected header", http.StatusBadRequest)
+		return false
+	}
+
+	// Decode the protected header
+	protectedBytes, err := base64.RawURLEncoding.DecodeString(protectedB64)
+	if err != nil {
+		http.Error(w, "Invalid protected header encoding", http.StatusBadRequest)
+		return false
+	}
+
+	// Parse the protected header
+	var protected struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(protectedBytes, &protected); err != nil {
+		http.Error(w, "Invalid protected header format", http.StatusBadRequest)
+		return false
+	}
+
+	// Validate the nonce
+	if protected.Nonce == "" {
+		http.Error(w, "Missing nonce in protected header", http.StatusBadRequest)
+		return false
+	}
+
+	if !app.nonceStorage.IsValid(protected.Nonce) {
+		// Generate a fresh nonce for the error response
+		freshNonce, err := app.nonceGen.Generate()
+		if err != nil {
+			slog.Error("Failed to generate fresh nonce for error response", "error", err)
+		} else {
+			if err := app.nonceStorage.Store(freshNonce); err != nil {
+				slog.Error("Failed to store fresh nonce for error response", "error", err)
+			} else {
+				w.Header().Set("Replay-Nonce", freshNonce)
+			}
+		}
+		http.Error(w, "Invalid or reused nonce", http.StatusBadRequest)
+		return false
+	}
+
+	return true
 }
 
 func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	r.Body.Close()
+
+	// Parse JWS request
+	var jwsReq map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
+		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate nonce
+	if !app.validateNonce(w, jwsReq) {
+		return
+	}
+
 	// For this minimal implementation, we'll accept any account creation
 	accountID := fmt.Sprintf("account_%d", time.Now().UnixNano())
 
@@ -52,6 +140,18 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 	}
 
 	app.accounts[accountID] = account
+
+	// Generate a fresh nonce for the response
+	freshNonce, err := app.nonceGen.Generate()
+	if err != nil {
+		slog.Error("Failed to generate fresh nonce for response", "error", err)
+	} else {
+		if err := app.nonceStorage.Store(freshNonce); err != nil {
+			slog.Error("Failed to store fresh nonce for response", "error", err)
+		} else {
+			w.Header().Set("Replay-Nonce", freshNonce)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Location", app.settings.ServerURL+"/acme/home/account/"+accountID)
@@ -71,22 +171,33 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	slog.Info("New order raw request", "body", string(bodyBytes), "content_type", r.Header.Get("Content-Type"))
 
 	// Parse JWS request
-	var jwsReq struct {
-		Protected string `json:"protected"`
-		Payload   string `json:"payload"`
-		Signature string `json:"signature"`
-	}
-
+	var jwsReq map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
 		slog.Error("Failed to parse JWS request", "error", err, "body", string(bodyBytes))
 		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
 		return
 	}
 
+	// Validate nonce
+	if !app.validateNonce(w, jwsReq) {
+		return
+	}
+
+	// Convert back to struct for easier access
+	var jwsReqStruct struct {
+		Protected string `json:"protected"`
+		Payload   string `json:"payload"`
+		Signature string `json:"signature"`
+	}
+	if err := json.Unmarshal(bodyBytes, &jwsReqStruct); err != nil {
+		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
+		return
+	}
+
 	// Decode the base64url payload
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(jwsReq.Payload)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(jwsReqStruct.Payload)
 	if err != nil {
-		slog.Error("Failed to decode payload", "error", err, "payload", jwsReq.Payload)
+		slog.Error("Failed to decode payload", "error", err, "payload", jwsReqStruct.Payload)
 		http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
 		return
 	}
@@ -128,6 +239,18 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Generated order", "order", order)
 
+	// Generate a fresh nonce for the response
+	freshNonce, err := app.nonceGen.Generate()
+	if err != nil {
+		slog.Error("Failed to generate fresh nonce for response", "error", err)
+	} else {
+		if err := app.nonceStorage.Store(freshNonce); err != nil {
+			slog.Error("Failed to store fresh nonce for response", "error", err)
+		} else {
+			w.Header().Set("Replay-Nonce", freshNonce)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Location", app.settings.ServerURL+"/acme/home/order/"+orderID)
 	w.WriteHeader(http.StatusCreated)
@@ -164,12 +287,24 @@ func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body.Close()
 
+	// Parse JWS request for nonce validation
+	var jwsReqMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &jwsReqMap); err != nil {
+		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate nonce
+	if !app.validateNonce(w, jwsReqMap) {
+		return
+	}
+
+	// Convert back to struct for easier access
 	var jwsReq struct {
 		Protected string `json:"protected"`
 		Payload   string `json:"payload"`
 		Signature string `json:"signature"`
 	}
-
 	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
 		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
 		return
@@ -202,6 +337,18 @@ func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
 
 	order.Status = "valid"
 	order.Certificate = app.settings.ServerURL + "/acme/home/cert/" + orderID
+
+	// Generate a fresh nonce for the response
+	freshNonce, err := app.nonceGen.Generate()
+	if err != nil {
+		slog.Error("Failed to generate fresh nonce for response", "error", err)
+	} else {
+		if err := app.nonceStorage.Store(freshNonce); err != nil {
+			slog.Error("Failed to store fresh nonce for response", "error", err)
+		} else {
+			w.Header().Set("Replay-Nonce", freshNonce)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(order)
