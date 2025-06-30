@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -275,18 +276,26 @@ func (app *Application) createServerCert() error {
 		return fmt.Errorf("failed to generate server key: %v", err)
 	}
 
+	// Extract hostname without port
+	hostname := app.settings.Hostname
+	host, _, err := net.SplitHostPort(hostname)
+	if err != nil {
+		// hostname doesn't contain a port, use as-is
+		host = hostname
+	}
+
 	// Create server certificate template
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
 			Organization: []string{"WEC CA"},
-			CommonName:   app.settings.Hostname,
+			CommonName:   host,
 		},
 		NotBefore:   time.Now(),
 		NotAfter:    time.Now().AddDate(1, 0, 0), // 1 year
 		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    []string{app.settings.Hostname},
+		DNSNames:    []string{host},
 	}
 
 	// Create certificate signed by CA
