@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-jose/go-jose/v4"
 )
 
 func (app *Application) handleGetDirectory(w http.ResponseWriter, r *http.Request) {
@@ -76,37 +78,15 @@ func (app *Application) handleHeadNewNonce(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 }
 
-// validateNonce extracts and validates the nonce from a JWS request
-func (app *Application) validateNonce(w http.ResponseWriter, jwsReq map[string]interface{}) bool {
-	protectedB64, ok := jwsReq["protected"].(string)
-	if !ok {
-		http.Error(w, "Missing or invalid protected header", http.StatusBadRequest)
-		return false
-	}
-
-	// Decode the protected header
-	protectedBytes, err := base64.RawURLEncoding.DecodeString(protectedB64)
-	if err != nil {
-		http.Error(w, "Invalid protected header encoding", http.StatusBadRequest)
-		return false
-	}
-
-	// Parse the protected header
-	var protected struct {
-		Nonce string `json:"nonce"`
-	}
-	if err := json.Unmarshal(protectedBytes, &protected); err != nil {
-		http.Error(w, "Invalid protected header format", http.StatusBadRequest)
-		return false
-	}
-
-	// Validate the nonce
-	if protected.Nonce == "" {
+// validateNonceFromHeader validates the nonce from a go-jose signature header
+func (app *Application) validateNonceFromHeader(w http.ResponseWriter, header jose.Header) bool {
+	nonce, ok := header.ExtraHeaders["nonce"].(string)
+	if !ok || nonce == "" {
 		http.Error(w, "Missing nonce in protected header", http.StatusBadRequest)
 		return false
 	}
 
-	if !app.nonceStorage.IsValid(protected.Nonce) {
+	if !app.nonceStorage.IsValid(nonce) {
 		// Generate a fresh nonce for the error response
 		freshNonce, err := app.nonceGen.Generate()
 		if err != nil {
@@ -134,47 +114,70 @@ func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Requ
 	}
 	r.Body.Close()
 
-	// Parse JWS request
-	var jwsReq map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
+	// Parse JWS using go-jose
+	jws, err := jose.ParseSigned(string(bodyBytes), []jose.SignatureAlgorithm{jose.RS256, jose.ES256, jose.EdDSA})
+	if err != nil {
+		slog.Error("Failed to parse JWS", "error", err)
 		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
 		return
 	}
 
-	// Validate nonce
-	if !app.validateNonce(w, jwsReq) {
+	// Extract and validate protected header
+	if len(jws.Signatures) != 1 {
+		http.Error(w, "JWS must have exactly one signature", http.StatusBadRequest)
 		return
 	}
 
-	// Validate JWS structure
-	jwsRequest, err := ValidateJWSStructure(jwsReq)
-	if err != nil {
-		slog.Error("Invalid JWS structure", "error", err)
-		http.Error(w, fmt.Sprintf("Invalid JWS: %v", err), http.StatusBadRequest)
+	header := jws.Signatures[0].Header
+
+	// Validate nonce from header
+	nonce, ok := header.ExtraHeaders["nonce"].(string)
+	if !ok || nonce == "" {
+		http.Error(w, "Missing nonce in protected header", http.StatusBadRequest)
 		return
 	}
 
-	// Validate protected header and extract JWK
+	if !app.nonceStorage.IsValid(nonce) {
+		// Generate a fresh nonce for the error response
+		freshNonce, err := app.nonceGen.Generate()
+		if err != nil {
+			slog.Error("Failed to generate fresh nonce for error response", "error", err)
+		} else {
+			if err := app.nonceStorage.Store(freshNonce); err != nil {
+				slog.Error("Failed to store fresh nonce for error response", "error", err)
+			} else {
+				w.Header().Set("Replay-Nonce", freshNonce)
+			}
+		}
+		http.Error(w, "Invalid or reused nonce", http.StatusBadRequest)
+		return
+	}
+
+	// Validate URL
 	expectedURL := app.settings.ServerURL + "/acme/new-account"
-	header, err := ValidateProtectedHeader(jwsRequest.Protected, expectedURL)
+	url, ok := header.ExtraHeaders["url"].(string)
+	if !ok || url != expectedURL {
+		http.Error(w, fmt.Sprintf("URL mismatch: expected %s, got %s", expectedURL, url), http.StatusBadRequest)
+		return
+	}
+
+	// Extract JWK from header
+	if header.JSONWebKey == nil {
+		// Check for kid field (not allowed for new account)
+		if header.KeyID != "" {
+			http.Error(w, "New account creation must use 'jwk' field, not 'kid'", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "Missing 'jwk' field in protected header", http.StatusBadRequest)
+		return
+	}
+
+	jwk := header.JSONWebKey
+	slog.Info("Successfully extracted JWK", "key_type", jwk.Algorithm, "use", jwk.Use)
+
+	// Verify JWS signature using go-jose
+	payload, err := jws.Verify(jwk)
 	if err != nil {
-		slog.Error("Protected header validation failed", "error", err)
-		http.Error(w, fmt.Sprintf("Invalid protected header: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	jwk := header.JWK
-	slog.Info("Successfully extracted JWK", "key_type", jwk.KeyType, "curve", jwk.Curve)
-
-	// Validate algorithm matches key type
-	if err := ValidateAlgorithmKeyMatch(header.Algorithm, jwk); err != nil {
-		slog.Error("Algorithm/key mismatch", "error", err, "algorithm", header.Algorithm, "key_type", jwk.KeyType)
-		http.Error(w, fmt.Sprintf("Algorithm/key mismatch: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Verify JWS signature
-	if err := VerifyJWSSignature(jwsRequest, jwk); err != nil {
 		slog.Error("JWS signature verification failed", "error", err, "algorithm", header.Algorithm)
 		http.Error(w, "Invalid signature", http.StatusBadRequest)
 		return
@@ -183,7 +186,7 @@ func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Requ
 	slog.Info("JWS signature verification successful", "algorithm", header.Algorithm)
 
 	// Serialize JWK for storage
-	jwkJSON, err := SerializeJWK(jwk)
+	jwkJSON, err := json.Marshal(jwk)
 	if err != nil {
 		slog.Error("JWK serialization failed", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -191,28 +194,16 @@ func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Parse payload to extract contact information
-	payloadB64, ok := jwsReq["payload"].(string)
-	if !ok {
-		http.Error(w, "Missing or invalid payload", http.StatusBadRequest)
-		return
-	}
-
 	var contact []string
-	if payloadB64 != "" { // Empty payload is allowed for new account
-		payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
-		if err != nil {
-			http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
-			return
-		}
-
-		var payload struct {
+	if len(payload) > 0 { // Empty payload is allowed for new account
+		var payloadData struct {
 			Contact []string `json:"contact,omitempty"`
 		}
-		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		if err := json.Unmarshal(payload, &payloadData); err != nil {
 			// Ignore payload parsing errors for account creation - contact is optional
 			slog.Info("Could not parse account payload", "error", err)
 		} else {
-			contact = payload.Contact
+			contact = payloadData.Contact
 		}
 	}
 
@@ -222,7 +213,7 @@ func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Requ
 		ID:      accountID,
 		Status:  "valid",
 		Contact: contact,
-		Key:     jwkJSON, // Store validated JWK as JSON
+		Key:     string(jwkJSON), // Store validated JWK as JSON
 	}
 
 	if err := app.accountStorage.Create(account); err != nil {
@@ -273,47 +264,44 @@ func (app *Application) handlePostNewOrder(w http.ResponseWriter, r *http.Reques
 
 	slog.Info("New order raw request", "body", string(bodyBytes), "content_type", r.Header.Get("Content-Type"))
 
-	// Parse JWS request
-	var jwsReq map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
-		slog.Error("Failed to parse JWS request", "error", err, "body", string(bodyBytes))
+	// Parse JWS using go-jose
+	jws, err := jose.ParseSigned(string(bodyBytes), []jose.SignatureAlgorithm{jose.RS256, jose.ES256, jose.EdDSA})
+	if err != nil {
+		slog.Error("Failed to parse JWS", "error", err)
 		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
 		return
 	}
+
+	// Extract and validate protected header
+	if len(jws.Signatures) != 1 {
+		http.Error(w, "JWS must have exactly one signature", http.StatusBadRequest)
+		return
+	}
+
+	header := jws.Signatures[0].Header
 
 	// Validate nonce
-	if !app.validateNonce(w, jwsReq) {
+	if !app.validateNonceFromHeader(w, header) {
 		return
 	}
 
-	// Convert back to struct for easier access
-	var jwsReqStruct struct {
-		Protected string `json:"protected"`
-		Payload   string `json:"payload"`
-		Signature string `json:"signature"`
-	}
-	if err := json.Unmarshal(bodyBytes, &jwsReqStruct); err != nil {
-		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
-		return
-	}
+	// We need a key to verify the signature - for new order, we expect 'kid' not 'jwk'
+	// This is different from new account where we need 'jwk'
+	// For now, let's skip signature verification for new order (simplified implementation)
+	// In a full implementation, we'd look up the account key by 'kid'
 
-	// Decode the base64url payload
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(jwsReqStruct.Payload)
-	if err != nil {
-		slog.Error("Failed to decode payload", "error", err, "payload", jwsReqStruct.Payload)
-		http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
-		return
-	}
+	// Get payload without verification for now (simplified)
+	payload := jws.UnsafePayloadWithoutVerification()
 
-	slog.Info("Decoded payload", "payload", string(payloadBytes))
+	slog.Info("Decoded payload", "payload", string(payload))
 
 	// Parse the actual request from the payload
 	var req struct {
 		Identifiers []Identifier `json:"identifiers"`
 	}
 
-	if err := json.Unmarshal(payloadBytes, &req); err != nil {
-		slog.Error("Failed to parse payload JSON", "error", err, "payload", string(payloadBytes))
+	if err := json.Unmarshal(payload, &req); err != nil {
+		slog.Error("Failed to parse payload JSON", "error", err, "payload", string(payload))
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
@@ -394,42 +382,35 @@ func (app *Application) handlePostFinalize(w http.ResponseWriter, r *http.Reques
 	}
 	r.Body.Close()
 
-	// Parse JWS request for nonce validation
-	var jwsReqMap map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &jwsReqMap); err != nil {
+	// Parse JWS using go-jose
+	jws, err := jose.ParseSigned(string(bodyBytes), []jose.SignatureAlgorithm{jose.RS256, jose.ES256, jose.EdDSA})
+	if err != nil {
 		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
 		return
 	}
+
+	// Extract and validate protected header
+	if len(jws.Signatures) != 1 {
+		http.Error(w, "JWS must have exactly one signature", http.StatusBadRequest)
+		return
+	}
+
+	header := jws.Signatures[0].Header
 
 	// Validate nonce
-	if !app.validateNonce(w, jwsReqMap) {
+	if !app.validateNonceFromHeader(w, header) {
 		return
 	}
 
-	// Convert back to struct for easier access
-	var jwsReq struct {
-		Protected string `json:"protected"`
-		Payload   string `json:"payload"`
-		Signature string `json:"signature"`
-	}
-	if err := json.Unmarshal(bodyBytes, &jwsReq); err != nil {
-		http.Error(w, "Invalid JWS request", http.StatusBadRequest)
-		return
-	}
-
-	// Decode the base64url payload
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(jwsReq.Payload)
-	if err != nil {
-		http.Error(w, "Invalid payload encoding", http.StatusBadRequest)
-		return
-	}
+	// Get payload without verification for now (simplified)
+	payload := jws.UnsafePayloadWithoutVerification()
 
 	// Parse CSR from payload
 	var req struct {
 		CSR string `json:"csr"`
 	}
 
-	if err := json.Unmarshal(payloadBytes, &req); err != nil {
+	if err := json.Unmarshal(payload, &req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
