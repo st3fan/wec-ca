@@ -68,14 +68,24 @@ type Directory struct {
 	KeyChange  string `json:"keyChange"`
 }
 
-func newApplication(settings *Settings) *Application {
+func newApplication(settings *Settings) (*Application, error) {
+	accountStorage, err := NewFilesystemAccountStorage(filepath.Join(dataDir, "accounts"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize account storage: %v", err)
+	}
+	
+	orderStorage, err := NewFilesystemOrderStorage(filepath.Join(dataDir, "orders"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize order storage: %v", err)
+	}
+	
 	return &Application{
 		settings:       settings,
-		accountStorage: NewFilesystemAccountStorage(filepath.Join(dataDir, "accounts")),
-		orderStorage:   NewFilesystemOrderStorage(filepath.Join(dataDir, "orders")),
+		accountStorage: accountStorage,
+		orderStorage:   orderStorage,
 		nonceGen:       NewCryptoNonceGenerator(16), // 16 bytes = 128 bits of entropy
 		nonceStorage:   NewInMemoryNonceStorage(time.Hour, 10*time.Minute), // 1 hour TTL, cleanup every 10 minutes
-	}
+	}, nil
 }
 
 func (app *Application) run() error {
