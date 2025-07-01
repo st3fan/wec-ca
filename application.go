@@ -93,8 +93,8 @@ func (app *Application) run() error {
 
 	// ACME endpoints
 	mux.HandleFunc("GET /acme/directory", app.handleGetDirectory)
-	mux.HandleFunc("HEAD /acme/new-nonce", app.handleNewNonce)
-	mux.HandleFunc("GET /acme/new-nonce", app.handleNewNonce)
+	mux.HandleFunc("HEAD /acme/new-nonce", app.handleHeadNewNonce)
+	mux.HandleFunc("GET /acme/new-nonce", app.handleGetNewNonce)
 	mux.HandleFunc("POST /acme/new-account", app.handlePostNewAccount)
 	mux.HandleFunc("GET /acme/account/{accountID}", app.handleGetAccount)
 	mux.HandleFunc("POST /acme/new-order", app.handlePostNewOrder)

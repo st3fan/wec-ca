@@ -34,7 +34,7 @@ func (app *Application) handleGetDirectory(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(dir)
 }
 
-func (app *Application) handleNewNonce(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetNewNonce(w http.ResponseWriter, r *http.Request) {
 	// Generate cryptographically secure nonce
 	nonce, err := app.nonceGen.Generate()
 	if err != nil {
@@ -52,13 +52,28 @@ func (app *Application) handleNewNonce(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Replay-Nonce", nonce)
 	w.Header().Set("Cache-Control", "no-store")
-	
-	// RFC 8555: HEAD requests should return 200, GET requests should return 204
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-	} else {
-		w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (app *Application) handleHeadNewNonce(w http.ResponseWriter, r *http.Request) {
+	// Generate cryptographically secure nonce
+	nonce, err := app.nonceGen.Generate()
+	if err != nil {
+		slog.Error("Failed to generate nonce", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
+
+	// Store nonce for validation
+	if err := app.nonceStorage.Store(nonce); err != nil {
+		slog.Error("Failed to store nonce", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Replay-Nonce", nonce)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
 }
 
 // validateNonce extracts and validates the nonce from a JWS request
