@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-func (app *Application) handleDirectory(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetDirectory(w http.ResponseWriter, r *http.Request) {
 	dir := Directory{
 		NewNonce:   app.settings.ServerURL + "/acme/new-nonce",
 		NewAccount: app.settings.ServerURL + "/acme/new-account",
@@ -110,7 +110,7 @@ func (app *Application) validateNonce(w http.ResponseWriter, jwsReq map[string]i
 	return true
 }
 
-func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -234,7 +234,7 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(account)
 }
 
-func (app *Application) handleAccount(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := r.PathValue("accountID")
 
 	account, err := app.accountStorage.Read(accountID)
@@ -247,7 +247,7 @@ func (app *Application) handleAccount(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(account)
 }
 
-func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostNewOrder(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body first for logging
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -349,7 +349,7 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
-func (app *Application) handleOrder(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
 	order, err := app.orderStorage.Read(orderID)
@@ -362,7 +362,7 @@ func (app *Application) handleOrder(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
-func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostFinalize(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
 	order, err := app.orderStorage.Read(orderID)
@@ -467,7 +467,7 @@ func (app *Application) handleCertificate(w http.ResponseWriter, r *http.Request
 	w.Write(certData)
 }
 
-func (app *Application) handleCACert(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetCACert(w http.ResponseWriter, r *http.Request) {
 	certData, err := os.ReadFile(caCertFile)
 	if err != nil {
 		http.Error(w, "CA certificate not found", http.StatusNotFound)
