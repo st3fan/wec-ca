@@ -80,8 +80,8 @@ func (app *Application) handleHeadNewNonce(w http.ResponseWriter, r *http.Reques
 
 // validateNonceFromHeader validates the nonce from a go-jose signature header
 func (app *Application) validateNonceFromHeader(w http.ResponseWriter, header jose.Header) bool {
-	nonce, ok := header.ExtraHeaders["nonce"].(string)
-	if !ok || nonce == "" {
+	nonce := header.Nonce
+	if nonce == "" {
 		http.Error(w, "Missing nonce in protected header", http.StatusBadRequest)
 		return false
 	}
@@ -130,9 +130,11 @@ func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Requ
 
 	header := jws.Signatures[0].Header
 
+	slog.Info("JWS Header", "header", header)
+
 	// Validate nonce from header
-	nonce, ok := header.ExtraHeaders["nonce"].(string)
-	if !ok || nonce == "" {
+	nonce, ok := header.Nonce, header.Nonce != ""
+	if !ok {
 		http.Error(w, "Missing nonce in protected header", http.StatusBadRequest)
 		return
 	}
@@ -155,9 +157,8 @@ func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Requ
 
 	// Validate URL
 	expectedURL := app.settings.ServerURL + "/acme/new-account"
-	url, ok := header.ExtraHeaders["url"].(string)
-	if !ok || url != expectedURL {
-		http.Error(w, fmt.Sprintf("URL mismatch: expected %s, got %s", expectedURL, url), http.StatusBadRequest)
+	if header.ExtraHeaders["url"] != expectedURL {
+		http.Error(w, fmt.Sprintf("URL mismatch: expected %s, got %s", expectedURL, header.ExtraHeaders["url"]), http.StatusBadRequest)
 		return
 	}
 
