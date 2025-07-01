@@ -20,17 +20,17 @@ type FilesystemOrderStorage struct {
 	dataDir string
 }
 
-func NewFilesystemOrderStorage(dataDir string) *FilesystemOrderStorage {
+func NewFilesystemOrderStorage(dataDir string) (*FilesystemOrderStorage, error) {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create orders directory: %v", err)
+	}
+	
 	return &FilesystemOrderStorage{
 		dataDir: dataDir,
-	}
+	}, nil
 }
 
 func (fs *FilesystemOrderStorage) Create(order *Order) error {
-	if err := os.MkdirAll(fs.dataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create orders directory: %v", err)
-	}
-
 	filename := fmt.Sprintf("%d.json", time.Now().UnixNano())
 	filePath := filepath.Join(fs.dataDir, filename)
 

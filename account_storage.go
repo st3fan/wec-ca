@@ -20,17 +20,17 @@ type FilesystemAccountStorage struct {
 	dataDir string
 }
 
-func NewFilesystemAccountStorage(dataDir string) *FilesystemAccountStorage {
+func NewFilesystemAccountStorage(dataDir string) (*FilesystemAccountStorage, error) {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create accounts directory: %v", err)
+	}
+	
 	return &FilesystemAccountStorage{
 		dataDir: dataDir,
-	}
+	}, nil
 }
 
 func (fs *FilesystemAccountStorage) Create(account *Account) error {
-	if err := os.MkdirAll(fs.dataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create accounts directory: %v", err)
-	}
-
 	filename := fmt.Sprintf("%d.json", time.Now().UnixNano())
 	filePath := filepath.Join(fs.dataDir, filename)
 
