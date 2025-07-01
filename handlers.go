@@ -452,7 +452,7 @@ func (app *Application) handlePostFinalize(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(order)
 }
 
-func (app *Application) handleCertificate(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostCertificate(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
 	certFile := filepath.Join(dataDir, orderID+".crt")

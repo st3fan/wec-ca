@@ -100,8 +100,7 @@ func (app *Application) run() error {
 	mux.HandleFunc("POST /acme/new-order", app.handlePostNewOrder)
 	mux.HandleFunc("GET /acme/order/{orderID}", app.handleGetOrder)
 	mux.HandleFunc("POST /acme/finalize/{orderID}", app.handlePostFinalize)
-	mux.HandleFunc("POST /acme/cert/{orderID}", app.handleCertificate)
-	mux.HandleFunc("GET /acme/cert/{orderID}", app.handleCertificate)
+	mux.HandleFunc("POST /acme/cert/{orderID}", app.handlePostCertificate)
 
 	// Static files
 	mux.HandleFunc("GET /ca.crt", app.handleGetCACert)
