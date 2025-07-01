@@ -234,36 +234,18 @@ func (app *Application) createCA() error {
 }
 
 func (app *Application) loadCA() error {
-	// Load CA certificate
-	certPEM, err := os.ReadFile(caCertFile)
+	caCert, err := readCertificateFile(caCertFile)
 	if err != nil {
-		return fmt.Errorf("failed to read CA certificate: %v", err)
-	}
-	certBlock, _ := pem.Decode(certPEM)
-	if certBlock == nil {
-		return fmt.Errorf("failed to decode CA certificate PEM")
-	}
-	caCert, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse CA certificate: %v", err)
+		return err
 	}
 
-	// Load CA private key
-	keyPEM, err := os.ReadFile(caKeyFile)
+	caKey, err := readPrivateKeyFile(caKeyFile)
 	if err != nil {
-		return fmt.Errorf("failed to read CA private key: %v", err)
-	}
-	keyBlock, _ := pem.Decode(keyPEM)
-	if keyBlock == nil {
-		return fmt.Errorf("failed to decode CA private key PEM")
-	}
-	caKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse CA private key: %v", err)
+		return err
 	}
 
 	app.caCert = caCert
-	app.caKey = caKey.(*rsa.PrivateKey)
+	app.caKey = caKey
 
 	log.Printf("Loaded existing CA certificate for %s", app.settings.Domain)
 	return nil
@@ -338,42 +320,24 @@ func (app *Application) createServerCert() error {
 	app.serverCert = serverCert
 	app.serverKey = serverKey
 
-	log.Printf("Created new server certificate for %s", app.settings.Hostname)
+	log.Printf("Created new server certificate for %s", host)
 	return nil
 }
 
 func (app *Application) loadServerCert() error {
-	// Load server certificate
-	certPEM, err := os.ReadFile(serverCertFile)
+	serverCert, err := readCertificateFile(serverCertFile)
 	if err != nil {
-		return fmt.Errorf("failed to read server certificate: %v", err)
-	}
-	certBlock, _ := pem.Decode(certPEM)
-	if certBlock == nil {
-		return fmt.Errorf("failed to decode server certificate PEM")
-	}
-	serverCert, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse server certificate: %v", err)
+		return err
 	}
 
-	// Load server private key
-	keyPEM, err := os.ReadFile(serverKeyFile)
+	serverKey, err := readPrivateKeyFile(serverKeyFile)
 	if err != nil {
-		return fmt.Errorf("failed to read server private key: %v", err)
-	}
-	keyBlock, _ := pem.Decode(keyPEM)
-	if keyBlock == nil {
-		return fmt.Errorf("failed to decode server private key PEM")
-	}
-	serverKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse server private key: %v", err)
+		return err
 	}
 
 	app.serverCert = serverCert
-	app.serverKey = serverKey.(*rsa.PrivateKey)
+	app.serverKey = serverKey
 
-	log.Printf("Loaded existing server certificate for %s", app.settings.Hostname)
+	log.Printf("Loaded existing server certificate for %s", serverCert.Subject.CommonName)
 	return nil
 }
