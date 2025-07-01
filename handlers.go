@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-func (app *Application) handleDirectory(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetDirectory(w http.ResponseWriter, r *http.Request) {
 	dir := Directory{
 		NewNonce:   app.settings.ServerURL + "/acme/new-nonce",
 		NewAccount: app.settings.ServerURL + "/acme/new-account",
@@ -34,7 +34,7 @@ func (app *Application) handleDirectory(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(dir)
 }
 
-func (app *Application) handleNewNonce(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetNewNonce(w http.ResponseWriter, r *http.Request) {
 	// Generate cryptographically secure nonce
 	nonce, err := app.nonceGen.Generate()
 	if err != nil {
@@ -52,13 +52,28 @@ func (app *Application) handleNewNonce(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Replay-Nonce", nonce)
 	w.Header().Set("Cache-Control", "no-store")
-	
-	// RFC 8555: HEAD requests should return 200, GET requests should return 204
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-	} else {
-		w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (app *Application) handleHeadNewNonce(w http.ResponseWriter, r *http.Request) {
+	// Generate cryptographically secure nonce
+	nonce, err := app.nonceGen.Generate()
+	if err != nil {
+		slog.Error("Failed to generate nonce", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
+
+	// Store nonce for validation
+	if err := app.nonceStorage.Store(nonce); err != nil {
+		slog.Error("Failed to store nonce", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Replay-Nonce", nonce)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
 }
 
 // validateNonce extracts and validates the nonce from a JWS request
@@ -110,7 +125,7 @@ func (app *Application) validateNonce(w http.ResponseWriter, jwsReq map[string]i
 	return true
 }
 
-func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostNewAccount(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -234,7 +249,7 @@ func (app *Application) handleNewAccount(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(account)
 }
 
-func (app *Application) handleAccount(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := r.PathValue("accountID")
 
 	account, err := app.accountStorage.Read(accountID)
@@ -247,7 +262,7 @@ func (app *Application) handleAccount(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(account)
 }
 
-func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostNewOrder(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body first for logging
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -349,7 +364,7 @@ func (app *Application) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
-func (app *Application) handleOrder(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
 	order, err := app.orderStorage.Read(orderID)
@@ -362,7 +377,7 @@ func (app *Application) handleOrder(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
-func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostFinalize(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
 	order, err := app.orderStorage.Read(orderID)
@@ -452,7 +467,7 @@ func (app *Application) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
-func (app *Application) handleCertificate(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handlePostCertificate(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("orderID")
 
 	certFile := filepath.Join(dataDir, orderID+".crt")
@@ -467,7 +482,7 @@ func (app *Application) handleCertificate(w http.ResponseWriter, r *http.Request
 	w.Write(certData)
 }
 
-func (app *Application) handleCACert(w http.ResponseWriter, r *http.Request) {
+func (app *Application) handleGetCACert(w http.ResponseWriter, r *http.Request) {
 	certData, err := os.ReadFile(caCertFile)
 	if err != nil {
 		http.Error(w, "CA certificate not found", http.StatusNotFound)
